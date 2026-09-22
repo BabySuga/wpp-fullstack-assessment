@@ -56,5 +56,5 @@ async def internal_error_handler(request: Request, exc: Exception):
 async def health_check():
     return {"status": "ok"}
 
-app.include_router(board_router.router)
-app.include_router(task_router.router)
+app.include_router(board_router)
+app.include_router(task_router)

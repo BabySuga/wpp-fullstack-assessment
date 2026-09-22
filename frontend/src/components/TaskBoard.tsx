@@ -10,7 +10,12 @@ interface TaskBoardProps {
 export function TaskBoard({ board }: TaskBoardProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDescription, setNewTaskDescription] = useState('');
   const [loading, setLoading] = useState(true);
+  
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editTaskTitle, setEditTaskTitle] = useState('');
+  const [editTaskDescription, setEditTaskDescription] = useState('');
 
   const fetchTasks = async () => {
     try {
@@ -32,9 +37,10 @@ export function TaskBoard({ board }: TaskBoardProps) {
     e.preventDefault();
     if (!newTaskTitle.trim()) return;
     try {
-      const newTask = await taskApi.create(board.id, newTaskTitle);
+      const newTask = await taskApi.create(board.id, newTaskTitle, newTaskDescription);
       setTasks([newTask, ...tasks]);
       setNewTaskTitle('');
+      setNewTaskDescription('');
     } catch (error) {
       console.error('Failed to create task:', error);
     }
@@ -46,6 +52,27 @@ export function TaskBoard({ board }: TaskBoardProps) {
       setTasks(tasks.map(t => t.id === taskId ? updatedTask : t));
     } catch (error) {
       console.error('Failed to update task status:', error);
+    }
+  };
+
+  const handleEditTask = (task: Task) => {
+    setEditingTaskId(task.id);
+    setEditTaskTitle(task.title);
+    setEditTaskDescription(task.description || '');
+  };
+
+  const handleUpdateTask = async (e: React.FormEvent, taskId: string) => {
+    e.preventDefault();
+    if (!editTaskTitle.trim()) return;
+    try {
+      const updatedTask = await taskApi.update(taskId, {
+        title: editTaskTitle,
+        description: editTaskDescription
+      });
+      setTasks(tasks.map(t => t.id === taskId ? updatedTask : t));
+      setEditingTaskId(null);
+    } catch (error) {
+      console.error('Failed to update task:', error);
     }
   };
 
@@ -67,27 +94,55 @@ export function TaskBoard({ board }: TaskBoardProps) {
         <div className="task-list">
           {columnTasks.map(task => (
             <div key={task.id} className="task-card">
-              <div className="task-header">
-                <span className="task-title">{task.title}</span>
-                <button 
-                  className="delete-task-btn"
-                  onClick={() => handleDeleteTask(task.id)}
-                  title="Delete Task"
-                >
-                  &times;
-                </button>
-              </div>
-              <div className="task-actions">
-                <select 
-                  value={task.status} 
-                  onChange={(e) => handleStatusChange(task.id, e.target.value as TaskStatus)}
-                  className="status-select"
-                >
-                  <option value="TODO">To Do</option>
-                  <option value="IN_PROGRESS">In Progress</option>
-                  <option value="DONE">Done</option>
-                </select>
-              </div>
+              {editingTaskId === task.id ? (
+                <form onSubmit={(e) => handleUpdateTask(e, task.id)} className="edit-task-form">
+                  <input 
+                    type="text" 
+                    value={editTaskTitle}
+                    onChange={(e) => setEditTaskTitle(e.target.value)}
+                    className="edit-task-input"
+                    placeholder="Task title"
+                    required
+                  />
+                  <textarea
+                    value={editTaskDescription}
+                    onChange={(e) => setEditTaskDescription(e.target.value)}
+                    className="edit-task-textarea"
+                    placeholder="Task description (optional)"
+                    rows={3}
+                  />
+                  <div className="edit-task-actions">
+                    <button type="submit" className="save-btn">Save</button>
+                    <button type="button" className="cancel-btn" onClick={() => setEditingTaskId(null)}>Cancel</button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <div className="task-header">
+                    <span className="task-title" onClick={() => handleEditTask(task)} style={{cursor: 'pointer'}} title="Click to edit">{task.title}</span>
+                    <button 
+                      className="delete-task-btn"
+                      onClick={() => handleDeleteTask(task.id)}
+                      title="Delete Task"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                  {task.description && <div className="task-description">{task.description}</div>}
+                  <div className="task-actions">
+                    <select 
+                      value={task.status} 
+                      onChange={(e) => handleStatusChange(task.id, e.target.value as TaskStatus)}
+                      className="status-select"
+                    >
+                      <option value="TODO">To Do</option>
+                      <option value="IN_PROGRESS">In Progress</option>
+                      <option value="DONE">Done</option>
+                    </select>
+                    <button type="button" className="edit-task-btn" onClick={() => handleEditTask(task)} style={{marginLeft: 'auto', fontSize: '0.8rem', padding: '2px 8px'}}>Edit</button>
+                  </div>
+                </>
+              )}
             </div>
           ))}
           {columnTasks.length === 0 && (
@@ -110,7 +165,15 @@ export function TaskBoard({ board }: TaskBoardProps) {
             placeholder="What needs to be done?"
             className="create-task-input"
           />
-          <button type="submit" className="create-task-btn" disabled={!newTaskTitle.trim()}>
+          <input
+            type="text"
+            value={newTaskDescription}
+            onChange={(e) => setNewTaskDescription(e.target.value)}
+            placeholder="Description (optional)"
+            className="create-task-input"
+            style={{marginTop: '4px'}}
+          />
+          <button type="submit" className="create-task-btn" disabled={!newTaskTitle.trim()} style={{marginTop: '4px'}}>
             Add Task
           </button>
         </form>
