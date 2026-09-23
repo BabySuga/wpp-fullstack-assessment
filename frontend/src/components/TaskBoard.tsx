@@ -1,291 +1,426 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Board, Task, TaskStatus } from '../types';
 import { taskApi } from '../api/taskApi';
 import { getUserFriendlyError } from '../api/client';
+import { KanbanColumn } from './KanbanColumn';
+import { TaskDialog } from './TaskDialog';
 import './TaskBoard.css';
 
 interface TaskBoardProps {
   board: Board;
+  onOpenSidebar: () => void;
 }
 
-export function TaskBoard({ board }: TaskBoardProps) {
+const COLUMNS: { status: TaskStatus; title: string }[] = [
+  { status: 'TODO', title: 'To Do' },
+  { status: 'IN_PROGRESS', title: 'In Progress' },
+  { status: 'DONE', title: 'Done' },
+];
+
+const STATUS_FILTER_OPTIONS: { value: TaskStatus | 'ALL'; label: string }[] = [
+  { value: 'ALL', label: 'All' },
+  { value: 'TODO', label: 'To Do' },
+  { value: 'IN_PROGRESS', label: 'In Progress' },
+  { value: 'DONE', label: 'Done' },
+];
+
+const LAST_STATUS_FILTER_KEY = 'mini-task-manager:last-status-filter';
+
+const getStoredStatusFilter = (): TaskStatus | 'ALL' => {
+  try {
+    const savedFilter = localStorage.getItem(LAST_STATUS_FILTER_KEY);
+    if (savedFilter === 'ALL' || savedFilter === 'TODO' || savedFilter === 'IN_PROGRESS' || savedFilter === 'DONE') {
+      return savedFilter;
+    }
+  } catch {
+    // ignore storage issues and fall back to default
+  }
+
+  return 'ALL';
+};
+
+export function TaskBoard({ board, onOpenSidebar }: TaskBoardProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [newTaskDescription, setNewTaskDescription] = useState('');
-  const [taskTitleError, setTaskTitleError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<TaskStatus | 'ALL'>('ALL');
+  // loadError replaces the board view; actionError shows as an inline banner
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<TaskStatus | 'ALL'>(getStoredStatusFilter);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [editTaskTitle, setEditTaskTitle] = useState('');
-  const [editTaskDescription, setEditTaskDescription] = useState('');
-  const [editTaskTitleError, setEditTaskTitleError] = useState<string | null>(null);
+  useEffect(() => {
+    localStorage.setItem(LAST_STATUS_FILTER_KEY, statusFilter);
+  }, [statusFilter]);
 
-  const fetchTasks = async () => {
+  // Drag state
+  const draggingTaskRef = useRef<Task | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOverColumn, setDragOverColumn] = useState<TaskStatus | null>(null);
+  const [isDragOverDelete, setIsDragOverDelete] = useState(false);
+
+  const fetchTasks = useCallback(async () => {
     try {
       setLoading(true);
-      setError(null);
-      const data = await taskApi.getByBoardId(
-        board.id,
-        statusFilter === 'ALL' ? undefined : statusFilter
-      );
+      setLoadError(null);
+      const data = await taskApi.getByBoardId(board.id);
       setTasks(data);
     } catch (caughtError) {
-      setError(getUserFriendlyError(caughtError));
+      setLoadError(getUserFriendlyError(caughtError));
     } finally {
       setLoading(false);
     }
-  };
+  }, [board.id]);
 
   useEffect(() => {
     fetchTasks();
-  }, [board.id, statusFilter]);
+  }, [fetchTasks]);
 
-  const validateTaskTitle = (value: string): string | null => {
-    if (!value.trim()) {
-      return 'Task title is required.';
-    }
-
-    return null;
-  };
-
-  const handleCreateTask = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmedTitle = newTaskTitle.trim();
-    const validationError = validateTaskTitle(trimmedTitle);
-
-    setTaskTitleError(validationError);
-
-    if (validationError) {
-      return;
-    }
-
+  // ===================================================
+  // Task creation
+  // ===================================================
+  const handleCreateTask = async (title: string, description: string) => {
     try {
-      const newTask = await taskApi.create(board.id, trimmedTitle, newTaskDescription.trim());
-      setTasks([newTask, ...tasks]);
-      setNewTaskTitle('');
-      setNewTaskDescription('');
-      setTaskTitleError(null);
+      const newTask = await taskApi.create(board.id, title, description || undefined);
+
+      const targetStatus = statusFilter === 'ALL' ? newTask.status : statusFilter;
+      const taskToDisplay = targetStatus === newTask.status
+        ? newTask
+        : { ...newTask, status: targetStatus };
+
+      if (targetStatus !== newTask.status) {
+        const updatedTask = await taskApi.update(newTask.id, { status: targetStatus });
+        setTasks(prev => [updatedTask, ...prev.filter(task => task.id !== newTask.id)]);
+      } else {
+        setTasks(prev => [taskToDisplay, ...prev]);
+      }
+
+      setIsDialogOpen(false);
     } catch (caughtError) {
-      setTaskTitleError(getUserFriendlyError(caughtError));
-      setError(null);
+      setActionError(getUserFriendlyError(caughtError));
+      throw caughtError;
     }
   };
 
+  const handleEditTask = async (taskId: string, title: string, description: string) => {
+    try {
+      const payload: { title?: string; description?: string } = {};
+      const trimmedTitle = title.trim();
+      const trimmedDescription = description.trim();
+
+      if (trimmedTitle !== (tasks.find(task => task.id === taskId)?.title ?? '')) {
+        payload.title = trimmedTitle;
+      }
+      if (trimmedDescription !== (tasks.find(task => task.id === taskId)?.description ?? '')) {
+        payload.description = trimmedDescription;
+      }
+
+      const updatedTask = await taskApi.update(taskId, payload);
+      setTasks(prev => prev.map(task => task.id === taskId ? updatedTask : task));
+      setEditingTask(null);
+      setIsDialogOpen(false);
+    } catch (caughtError) {
+      setActionError(getUserFriendlyError(caughtError));
+      throw caughtError;
+    }
+  };
+
+  // ===================================================
+  // Status change (select fallback)
+  // ===================================================
   const handleStatusChange = async (taskId: string, newStatus: TaskStatus) => {
+    const prevTasks = tasks;
+    // Optimistic update
+    setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: newStatus } : t));
     try {
       const updatedTask = await taskApi.update(taskId, { status: newStatus });
-      setTasks(tasks.map(t => t.id === taskId ? updatedTask : t));
+      setTasks(prev => prev.map(t => t.id === taskId ? updatedTask : t));
     } catch (caughtError) {
-      setError(getUserFriendlyError(caughtError));
+      setTasks(prevTasks); // Restore on failure
+      setActionError(getUserFriendlyError(caughtError));
     }
   };
 
-  const handleEditTask = (task: Task) => {
-    setEditingTaskId(task.id);
-    setEditTaskTitle(task.title);
-    setEditTaskDescription(task.description || '');
-  };
-
-  const handleUpdateTask = async (e: React.FormEvent, taskId: string) => {
-    e.preventDefault();
-    const trimmedTitle = editTaskTitle.trim();
-    const validationError = validateTaskTitle(trimmedTitle);
-
-    setEditTaskTitleError(validationError);
-
-    if (validationError) {
-      return;
-    }
-
-    try {
-      const updatedTask = await taskApi.update(taskId, {
-        title: trimmedTitle,
-        description: editTaskDescription.trim()
-      });
-      setTasks(tasks.map(t => t.id === taskId ? updatedTask : t));
-      setEditingTaskId(null);
-      setEditTaskTitleError(null);
-    } catch (caughtError) {
-      setEditTaskTitleError(getUserFriendlyError(caughtError));
-      setError(null);
-    }
-  };
-
+  // ===================================================
+  // Delete task
+  // ===================================================
   const handleDeleteTask = async (taskId: string) => {
+    const prevTasks = tasks;
+    setTasks(prev => prev.filter(t => t.id !== taskId));
     try {
       await taskApi.delete(taskId);
-      setTasks(tasks.filter(t => t.id !== taskId));
     } catch (caughtError) {
-      setError(getUserFriendlyError(caughtError));
+      setTasks(prevTasks);
+      setActionError(getUserFriendlyError(caughtError));
     }
   };
 
-  const visibleTasks = statusFilter === 'ALL'
-    ? tasks
-    : tasks.filter(task => task.status === statusFilter);
-
-  const renderColumn = (status: TaskStatus, title: string) => {
-    const columnTasks = visibleTasks.filter(t => t.status === status);
-
-    return (
-      <div className="task-column">
-        <h3 className="column-title">{title} <span className="task-count">{columnTasks.length}</span></h3>
-        <div className="task-list">
-          {columnTasks.map(task => (
-            <div key={task.id} className="task-card">
-              {editingTaskId === task.id ? (
-                <form onSubmit={(e) => handleUpdateTask(e, task.id)} className="edit-task-form">
-                  <input
-                    type="text"
-                    value={editTaskTitle}
-                    onChange={(e) => {
-                      setEditTaskTitle(e.target.value);
-                      if (editTaskTitleError) {
-                        setEditTaskTitleError(null);
-                      }
-                    }}
-                    className="edit-task-input"
-                    placeholder="Task title"
-                    required
-                    aria-invalid={Boolean(editTaskTitleError)}
-                  />
-                  {editTaskTitleError && (
-                    <div role="alert" style={{ color: '#d93025', marginTop: '4px', fontSize: '0.85rem' }}>
-                      {editTaskTitleError}
-                    </div>
-                  )}
-                  <textarea
-                    value={editTaskDescription}
-                    onChange={(e) => setEditTaskDescription(e.target.value)}
-                    className="edit-task-textarea"
-                    placeholder="Task description (optional)"
-                    rows={3}
-                  />
-                  <div className="edit-task-actions">
-                    <button type="submit" className="save-btn">Save</button>
-                    <button type="button" className="cancel-btn" onClick={() => setEditingTaskId(null)}>Cancel</button>
-                  </div>
-                </form>
-              ) : (
-                <>
-                  <div className="task-header">
-                    <span className="task-title" onClick={() => handleEditTask(task)} style={{cursor: 'pointer'}} title="Click to edit">{task.title}</span>
-                    <button
-                      className="delete-task-btn"
-                      onClick={() => handleDeleteTask(task.id)}
-                      title="Delete Task"
-                    >
-                      &times;
-                    </button>
-                  </div>
-                  {task.description && <div className="task-description">{task.description}</div>}
-                  <div className="task-created-at">
-                    Created {new Date(task.created_at).toLocaleString()}
-                  </div>
-                  <div className="task-actions">
-                    <select
-                      value={task.status}
-                      onChange={(e) => handleStatusChange(task.id, e.target.value as TaskStatus)}
-                      className="status-select"
-                    >
-                      <option value="TODO">To Do</option>
-                      <option value="IN_PROGRESS">In Progress</option>
-                      <option value="DONE">Done</option>
-                    </select>
-                    <button type="button" className="edit-task-btn" onClick={() => handleEditTask(task)} style={{marginLeft: 'auto', fontSize: '0.8rem', padding: '2px 8px'}}>Edit</button>
-                  </div>
-                </>
-              )}
-            </div>
-          ))}
-          {columnTasks.length === 0 && (
-            <div className="empty-column">No tasks</div>
-          )}
-        </div>
-      </div>
-    );
+  const openEditDialog = (task: Task) => {
+    setEditingTask(task);
+    setIsDialogOpen(true);
   };
 
+  const closeDialog = () => {
+    setIsDialogOpen(false);
+    setEditingTask(null);
+    setActionError(null);
+  };
+
+  // ===================================================
+  // Drag-and-drop: column to column
+  // ===================================================
+  const handleDragStart = useCallback((e: React.DragEvent, task: Task) => {
+    draggingTaskRef.current = task;
+    setIsDragging(true);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', task.id);
+    // Add visual class to the dragged element
+    const el = e.currentTarget as HTMLElement;
+    requestAnimationFrame(() => el.classList.add('is-dragging'));
+  }, []);
+
+  const handleDragEnd = useCallback((e: React.DragEvent) => {
+    setIsDragging(false);
+    setDragOverColumn(null);
+    setIsDragOverDelete(false);
+    draggingTaskRef.current = null;
+    const el = e.currentTarget as HTMLElement;
+    el.classList.remove('is-dragging');
+  }, []);
+
+  const handleColumnDragOver = useCallback((e: React.DragEvent, status: TaskStatus) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverColumn(status);
+    setIsDragOverDelete(false);
+  }, []);
+
+  const handleColumnDragLeave = useCallback((e: React.DragEvent) => {
+    // Only clear if leaving to outside the column (not into a child)
+    const relatedTarget = e.relatedTarget as Node | null;
+    const column = e.currentTarget as HTMLElement;
+    if (!column.contains(relatedTarget)) {
+      setDragOverColumn(null);
+    }
+  }, []);
+
+  const handleColumnDrop = useCallback(async (e: React.DragEvent, targetStatus: TaskStatus) => {
+    e.preventDefault();
+    setDragOverColumn(null);
+    setIsDragging(false);
+    setIsDragOverDelete(false);
+
+    const task = draggingTaskRef.current;
+    if (!task || task.status === targetStatus) return;
+
+    const prevTasks = tasks;
+    // Optimistic update
+    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: targetStatus } : t));
+
+    try {
+      const updatedTask = await taskApi.update(task.id, { status: targetStatus });
+      setTasks(prev => prev.map(t => t.id === task.id ? updatedTask : t));
+    } catch (caughtError) {
+      setTasks(prevTasks);
+      setActionError(getUserFriendlyError(caughtError));
+    }
+  }, [tasks]);
+
+  // ===================================================
+  // Drag-to-delete zone
+  // ===================================================
+  const handleDeleteZoneDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setIsDragOverDelete(true);
+    setDragOverColumn(null);
+  }, []);
+
+  const handleDeleteZoneDragLeave = useCallback(() => {
+    setIsDragOverDelete(false);
+  }, []);
+
+  const handleDeleteZoneDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOverDelete(false);
+    setIsDragging(false);
+
+    const task = draggingTaskRef.current;
+    if (!task) return;
+
+    await handleDeleteTask(task.id);
+  }, [tasks]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ===================================================
+  // Filtering
+  // ===================================================
+  const visibleTasks = statusFilter === 'ALL'
+    ? tasks
+    : tasks.filter(t => t.status === statusFilter);
+
+  const getColumnTasks = (status: TaskStatus) =>
+    visibleTasks.filter(t => t.status === status);
+
+  const visibleColumns = statusFilter === 'ALL'
+    ? COLUMNS
+    : COLUMNS.filter(column => column.status === statusFilter);
+
+  // ===================================================
+  // Render
+  // ===================================================
   return (
-    <div className="task-board-container">
+    <div className="task-board">
+      {/* Board Header */}
       <div className="board-header">
-        <h2 className="board-title">{board.name}</h2>
-        <label className="status-filter-control">
-          <span>Status</span>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as TaskStatus | 'ALL')}
-            className="status-select"
-          >
-            <option value="ALL">All</option>
-            <option value="TODO">TODO</option>
-            <option value="IN_PROGRESS">IN_PROGRESS</option>
-            <option value="DONE">DONE</option>
-          </select>
-        </label>
-        <form onSubmit={handleCreateTask} className="create-task-form">
-          <input
-            type="text"
-            value={newTaskTitle}
-            onChange={(e) => {
-              setNewTaskTitle(e.target.value);
-              if (taskTitleError) {
-                setTaskTitleError(null);
-              }
-            }}
-            placeholder="What needs to be done?"
-            className="create-task-input"
-            required
-            aria-invalid={Boolean(taskTitleError)}
-          />
-          {taskTitleError && (
-            <div role="alert" style={{ color: '#d93025', marginTop: '4px', fontSize: '0.85rem' }}>
-              {taskTitleError}
-            </div>
-          )}
-          <input
-            type="text"
-            value={newTaskDescription}
-            onChange={(e) => setNewTaskDescription(e.target.value)}
-            placeholder="Description (optional)"
-            className="create-task-input"
-            style={{marginTop: '4px'}}
-          />
-          <button type="submit" className="create-task-btn" disabled={!newTaskTitle.trim()} style={{marginTop: '4px'}}>
-            Add Task
-          </button>
-        </form>
+        <button
+          className="btn btn-ghost board-menu-toggle menu-toggle"
+          onClick={onOpenSidebar}
+          aria-label="Open navigation"
+        >
+          ☰
+        </button>
+
+        <h1 className="board-title">{board.name}</h1>
+
+        {/* Status filter */}
+        <div className="status-filter" role="group" aria-label="Filter tasks by status">
+          {STATUS_FILTER_OPTIONS.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              className={`status-filter-btn${statusFilter === value ? ' is-active' : ''}`}
+              onClick={() => setStatusFilter(value)}
+              aria-pressed={statusFilter === value}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => setIsDialogOpen(true)}
+          aria-label="Add a new task"
+        >
+          + Add task
+        </button>
       </div>
 
+      {/* Task creation dialog */}
+      <TaskDialog
+        isOpen={isDialogOpen}
+        mode={editingTask ? 'edit' : 'create'}
+        initialTitle={editingTask?.title ?? ''}
+        initialDescription={editingTask?.description ?? ''}
+        onClose={closeDialog}
+        onSubmit={editingTask ? (title, description) => handleEditTask(editingTask.id, title, description) : handleCreateTask}
+      />
+
+      {/* Board content */}
       {loading ? (
-        <div className="board-loading">Loading tasks...</div>
-      ) : error ? (
-        <div className="board-state-panel board-error-panel">
-          <h3>Unable to load tasks</h3>
-          <p>{error}</p>
-          <button type="button" className="retry-btn" onClick={fetchTasks}>Try again</button>
+        <div className="board-state">
+          <div className="board-state-inner">
+            <p>Loading tasks…</p>
+          </div>
         </div>
-      ) : tasks.length === 0 ? (
-        <div className="board-empty-state">
-          <h3>No tasks yet</h3>
-          <p>This board has no tasks. Add one to get started.</p>
+      ) : loadError ? (
+        <div className="board-state board-error-state">
+          <div className="board-state-inner">
+            <h3>Could not load tasks</h3>
+            <p>{loadError}</p>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => { setLoadError(null); fetchTasks(); }}
+            >
+              Try again
+            </button>
+          </div>
         </div>
       ) : (
         <>
-          {visibleTasks.length === 0 && (
-            <div className="filter-empty-state">
-              <p>No tasks match the selected status filter.</p>
+          {actionError && (
+            <div className="action-error-banner" role="alert">
+              <span>{actionError}</span>
+              <button
+                type="button"
+                className="btn-icon"
+                onClick={() => setActionError(null)}
+                aria-label="Dismiss error"
+              >
+                ✕
+              </button>
             </div>
           )}
-          <div className="kanban-board">
-            {renderColumn('TODO', 'To Do')}
-            {renderColumn('IN_PROGRESS', 'In Progress')}
-            {renderColumn('DONE', 'Done')}
-          </div>
+          {visibleTasks.length === 0 ? (
+            <div className="board-empty-area">
+              <p className="filter-empty-hint">No tasks match the selected filter.</p>
+            </div>
+          ) : (
+            <div className={`kanban-board${statusFilter === 'ALL' ? '' : ' is-filtered'}`}>
+              {visibleColumns.map(({ status, title }) => (
+                <KanbanColumn
+                  key={status}
+                  status={status}
+                  title={title}
+                  tasks={getColumnTasks(status)}
+                  isFiltered={statusFilter !== 'ALL'}
+                  isDragOver={dragOverColumn === status}
+                  onDragOver={handleColumnDragOver}
+                  onDragLeave={handleColumnDragLeave}
+                  onDrop={handleColumnDrop}
+                  onDeleteTask={handleDeleteTask}
+                  onEditTask={openEditDialog}
+                  onStatusChange={handleStatusChange}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
+
+      <div className="task-board-tutorial" aria-label="Mini tutorial">
+        <div className="tutorial-item" title="Drag and drop to move task to another status" aria-label="Drag and drop to move task to another status">
+          <svg className="tutorial-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8 7h9m0 0 2 2m-2-2-2 2M16 17H7m0 0-2-2m2 2 2-2" />
+            <path d="M7 4v16" opacity="0.25" />
+          </svg>
+          <span>Drag and drop to move</span>
+        </div>
+
+        <div className="tutorial-item" title="Drag task to delete" aria-label="Drag task to delete">
+          <svg className="tutorial-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 7h16" />
+            <path d="M9 7V4h6v3" />
+            <path d="M7 7l1 12h8l1-12" />
+            <path d="M10 11v5M14 11v5" />
+          </svg>
+          <span>Drag to delete</span>
+        </div>
+
+        <div className="tutorial-item tutorial-item--accent" title="Double click to edit" aria-label="Double click to edit">
+          <svg className="tutorial-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 20h4l10.5-10.5a2.121 2.121 0 0 0-3-3L5 17v3Z" />
+            <path d="m13.5 6.5 4 4" />
+          </svg>
+          <span>Double click to edit</span>
+        </div>
+      </div>
+
+      {/* Delete drop zone — appears at bottom only while dragging */}
+      <div
+        className={`delete-zone${isDragging ? ' is-visible' : ''}${isDragOverDelete ? ' is-hovered' : ''}`}
+        onDragOver={handleDeleteZoneDragOver}
+        onDragLeave={handleDeleteZoneDragLeave}
+        onDrop={handleDeleteZoneDrop}
+        aria-hidden="true"
+        role="presentation"
+      >
+        🗑 Drop here to delete
+      </div>
     </div>
   );
 }

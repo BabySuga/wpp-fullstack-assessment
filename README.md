@@ -1,252 +1,170 @@
 # Mini Task Management Application
 
-## 1. Project Overview
-A mini task management application built as a study case. It allows users to create boards and manage tasks within those boards using a Kanban-style interface. 
-- **Architecture**: Monolithic repository containing separate backend and frontend services.
-- **Technologies**: 
-  - **Backend**: Python, FastAPI, SQLAlchemy, Alembic, PostgreSQL, Pydantic, Pytest.
-  - **Frontend**: React, TypeScript, Vite, Axios, Vanilla CSS.
+This repository contains a small board-and-task application for the WPP Media Fullstack Developer assessment. It is intentionally split into two independently runnable services:
 
-## 2. Project Structure
+- `backend/`: FastAPI REST API with PostgreSQL persistence.
+- `frontend/`: React and TypeScript Kanban client.
+
+The browser communicates with the API over HTTP. PostgreSQL is the persistent store. The application covers boards, task CRUD, status changes, validation, meaningful tests, and the database constraints required by the assessment.
+
+## Architecture
+
 ```text
-wpp-fullstack-assessment/
-├── README.md
-├── backend/
-│   ├── alembic/              # Database migrations
-│   ├── alembic.ini           # Alembic configuration
-│   ├── app/                  # FastAPI application code
-│   │   ├── models/           # SQLAlchemy models
-│   │   ├── routers/          # API endpoints
-│   │   ├── schemas/          # Pydantic validation schemas
-│   │   ├── services/         # Business logic
-│   │   ├── repositories/     # Database access
-│   │   ├── database.py       # Database connection setup
-│   │   ├── exceptions.py     # Custom exceptions
-│   │   └── main.py           # FastAPI app initialization
-│   ├── tests/                # Pytest unit and integration tests
-│   └── requirements.txt      # Python dependencies
-└── frontend/
-    ├── package.json          # Node dependencies and scripts
-    └── src/
-        ├── api/              # Axios API clients
-        ├── components/       # React UI components
-        ├── types/            # TypeScript interfaces
-        ├── App.tsx           # Main React component
-        └── main.tsx          # React application entry point
+Browser (localhost:5173) -- HTTP/JSON --> FastAPI (localhost:8000) -- SQLAlchemy --> PostgreSQL (localhost:5432)
 ```
 
-## 3. Database Setup
-The backend requires PostgreSQL. The project expects a local PostgreSQL instance with the default credentials and database name defined in `backend/app/config.py` and `backend/.env.example`:
+Docker Compose runs the backend and frontend containers only. PostgreSQL is **not** a Compose service; a PostgreSQL server must already be running on the host. The Compose backend reaches it through `postgres-db:host-gateway`.
 
-```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/taskmanager
-CORS_ORIGINS=["http://localhost:5173"]
-```
+## Technology stack
 
-### Clean database setup
-1. Start PostgreSQL and create the database used by the app:
+| Area | Technology | Reason |
+| --- | --- | --- |
+| API | Python, FastAPI | Clear HTTP routing, automatic OpenAPI, and request validation. |
+| Persistence | PostgreSQL, SQLAlchemy | Real relational constraints and durable storage. |
+| Migrations | Alembic | Repeatable schema creation from an empty database. |
+| Validation | Pydantic | Typed request and response contracts. |
+| Backend tests | Pytest | Tests business rules without starting the web server. |
+| UI | React, TypeScript, Vite | A typed, independently runnable frontend with a fast dev server. |
+| HTTP client | Axios | Centralized browser-to-API requests and error handling. |
+| Packaging | Docker Compose | Optional local orchestration for the two application services. |
+
+## Prerequisites
+
+- Docker and Docker Compose plugin for the container workflow.
+- Python 3.11+ for local backend development.
+- Node.js 20+ and npm for local frontend development.
+- PostgreSQL running on `localhost:5432` for local development and on the Docker host for Compose.
+- A PostgreSQL role/password matching the connection string used below (`postgres` / `postgres` by default).
+
+## PostgreSQL setup
+
+The normal development database is `taskmanager`. Create it before starting the backend:
+
 ```bash
 createdb -U postgres taskmanager
-# or
-psql -U postgres -d postgres -c "CREATE DATABASE taskmanager;"
 ```
-2. In the `backend/` folder, copy the example environment file (or export the variable manually):
+
+The application connection is configured by `DATABASE_URL`. The default is:
+
+```text
+postgresql://postgres:postgres@localhost:5432/taskmanager
+```
+
+The backend reads `backend/.env` through `app/config.py`. Alembic reads the same setting through `backend/alembic/env.py`:
+
 ```bash
+cd backend
 cp .env.example .env
-```
-3. The same `DATABASE_URL` is used by both the FastAPI app and Alembic. `backend/app/config.py` loads it into `settings.database_url`, and `backend/alembic/env.py` sets `sqlalchemy.url` from that same value before running migrations.
-4. Create the schema from the existing migration:
-```bash
-cd backend
 alembic upgrade head
 ```
-This runs the initial migration in `backend/alembic/versions/7b722de3df3e_initial_schema.py`, which creates the `boards` and `tasks` tables, validation checks, and the `ix_tasks_board_id_status` index.
-5. After the schema is ready, start the backend:
+
+On an empty database, revision `7b722de3df3e` creates `boards`, `tasks`, the constraints, and the `(board_id, status)` index. Database data is not committed to this repository; schema creation is migration-driven.
+
+The clean migration verification used a separate database, `taskmanager_clean_clone`, only for verification:
+
 ```bash
-uvicorn app.main:app --reload --port 8000
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/taskmanager_clean_clone \
+./venv/bin/alembic upgrade head
 ```
-The API will be running at `http://localhost:8000`.
 
-> Note: the repository’s `compose.yaml` sets `DATABASE_URL` for the backend container to `postgresql://postgres:postgres@postgres-db:5432/taskmanager`, but the project’s default working setup remains a PostgreSQL instance at `localhost:5432` for local development.
+That database was verified to contain `alembic_version`, `boards`, and `tasks`, including UUID keys, non-empty name/title checks, allowed statuses, the board foreign key with `ON DELETE CASCADE`, and the `(board_id, status)` index. The application does not permanently use this database; normal development remains `taskmanager`.
 
-## 4. Backend Setup
-The backend API is built with FastAPI. To start the backend:
+## Local development
 
-1. Navigate to the backend directory:
+### Backend
+
 ```bash
 cd backend
-```
-2. Create and activate a virtual environment:
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-3. Install dependencies:
-```bash
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
-```
-4. Ensure the PostgreSQL database exists and then run the schema migration:
-```bash
+cp .env.example .env
+createdb -U postgres taskmanager
 alembic upgrade head
-```
-5. Start the FastAPI server:
-```bash
 uvicorn app.main:app --reload --port 8000
 ```
-The API will be running at `http://localhost:8000`.
 
-## 5. Database Schema
+The API is at `http://localhost:8000`, Swagger UI is at `http://localhost:8000/docs`, and the health check is at `http://localhost:8000/health`.
 
-The schema is created by the initial Alembic migration. It contains the following tables.
+### Frontend
 
-### `boards`
-
-| Column | PostgreSQL type | Nullable | Default |
-| --- | --- | --- | --- |
-| `id` | `UUID` | No | `gen_random_uuid()` |
-| `name` | `VARCHAR(255)` | No | None |
-| `created_at` | `TIMESTAMPTZ` | No | `now()` |
-
-Primary key: `id`.
-
-### `tasks`
-
-| Column | PostgreSQL type | Nullable | Default |
-| --- | --- | --- | --- |
-| `id` | `UUID` | No | `gen_random_uuid()` |
-| `board_id` | `UUID` | No | None |
-| `title` | `VARCHAR(255)` | No | None |
-| `description` | `TEXT` | Yes | None |
-| `status` | `VARCHAR(20)` | No | `'TODO'` |
-| `created_at` | `TIMESTAMPTZ` | No | `now()` |
-| `updated_at` | `TIMESTAMPTZ` | No | `now()` |
-
-Primary key: `id`.
-
-### Relationships
-
-- `tasks.board_id` references `boards.id`.
-- The foreign key uses `ON DELETE CASCADE`, so deleting a board deletes its tasks.
-
-### Constraints
-
-- `boards_name_check`: `TRIM(boards.name) <> ''`.
-- `tasks_title_check`: `TRIM(tasks.title) <> ''`.
-- `tasks_status_check`: `tasks.status` must be one of `TODO`, `IN_PROGRESS`, or `DONE`.
-- The primary keys are non-null UUID values, and `tasks.board_id` is a required foreign key.
-- No other unique constraints are defined by the current schema.
-
-### Indexes
-
-- `ix_tasks_board_id_status` covers `tasks(board_id, status)`.
-- It supports retrieving a board's tasks, including queries that filter by status, without adding a separate index for each status value.
-
-### Design Rationale
-
-- UUID primary keys provide globally unique identifiers without exposing sequential record counts.
-- A required foreign key keeps every task associated with a board, while database-level cascading preserves referential integrity when a board is removed.
-- Non-empty checks prevent whitespace-only board names and task titles; the status check keeps task state within the three supported workflow values.
-- Time-zone-aware timestamps record creation and update times consistently, and the composite index matches the board task-list and status-filter query pattern.
-
-### Rejected schema decision
-
-- Alternative considered: allow tasks to remain without a board and handle deletion cleanup in application code instead of enforcing a foreign-key relationship.
-- Why it was rejected: this would allow orphaned task rows and move important referential integrity into the API layer, where it is easier to forget or bypass.
-- Chosen design: `tasks.board_id` is required and references `boards.id` with `ON DELETE CASCADE` in the migration, so deleting a board automatically removes its tasks.
-- Trade-off: the schema is slightly less flexible because a task cannot exist without a board, but it is safer and much simpler to reason about than managing board deletion manually.
-
-## 6. Frontend Setup
-The frontend is a React application created with Vite. To start the frontend:
-
-1. Navigate to the frontend directory:
 ```bash
 cd frontend
-```
-2. Install dependencies:
-```bash
 npm install
-```
-3. Start the development server:
-```bash
+cp .env.example .env
 npm run dev
 ```
-The frontend will be accessible at `http://localhost:5173`.
 
-## 7. API Documentation
+The UI is at `http://localhost:5173`. The browser API URL is configured by `VITE_API_BASE_URL`, defaulting to `http://localhost:8000`. It must use `localhost` because requests originate in the user's browser, not inside the frontend container.
 
-### Boards
-- **`GET /api/boards`**
-  - **Description**: Returns a list of all boards.
-  - **Response (200)**: `[{"id": "uuid", "name": "string", "created_at": "datetime"}]`
-- **`POST /api/boards`**
-  - **Description**: Creates a new board.
-  - **Request Body**: `{"name": "string"}` (name cannot be empty or whitespace)
-  - **Response (201)**: The created board object.
-  - **Error (422)**: If name is invalid.
-- **`DELETE /api/boards/{id}`**
-  - **Description**: Deletes a board and all of its tasks (ON DELETE CASCADE).
-  - **Response (204)**: No Content.
-  - **Error (404)**: If board is not found.
+## Docker Compose
 
-### Tasks
-- **`GET /api/boards/{id}/tasks`**
-  - **Description**: Retrieves tasks for a specific board. Supports optional `?status=` filter.
-  - **Response (200)**: `[{"id": "uuid", "board_id": "uuid", "title": "string", "description": "string", "status": "TODO|IN_PROGRESS|DONE", "created_at": "datetime", "updated_at": "datetime"}]`
-  - **Error (404)**: If board is not found.
-- **`POST /api/boards/{id}/tasks`**
-  - **Description**: Creates a new task in a board.
-  - **Request Body**: `{"title": "string", "description": "string"}` (title cannot be empty)
-  - **Response (201)**: The created task object.
-  - **Error (404)**: If board is not found.
-- **`PATCH /api/tasks/{id}`**
-  - **Description**: Updates an existing task (e.g., status, title).
-  - **Request Body**: `{"status": "TODO|IN_PROGRESS|DONE", "title": "string", "description": "string"}`
-  - **Response (200)**: The updated task object.
-  - **Error (404)**: If task is not found.
-- **`DELETE /api/tasks/{id}`**
-  - **Description**: Deletes a specific task.
-  - **Response (204)**: No Content.
-  - **Error (404)**: If task is not found.
+Before running Compose, create and start the host PostgreSQL database described above. Compose does not bootstrap PostgreSQL, persist database data, or run a PostgreSQL health check.
 
-### Error Handling
-All API errors return a unified JSON payload:
-```json
-{
-  "error": "NOT_FOUND | VALIDATION_ERROR | HTTP_ERROR | INTERNAL_ERROR",
-  "message": "Human readable error message",
-  "field": "Optional field name that caused the error"
-}
-```
-This shape is used for application errors, request validation errors, HTTP errors,
-framework-generated 404 responses, and unexpected server errors. Internal exception
-details are not returned to clients.
-
-## 8. Testing
-Backend tests are written using `pytest`. They use a real PostgreSQL database to ensure constraints and cascades work properly.
-
-To run the tests:
-1. Ensure a PostgreSQL database named `taskmanager_test` is available.
-2. Navigate to the backend folder and run:
 ```bash
-cd backend
-source venv/bin/activate
-pytest -v
+docker compose up --build
 ```
 
-## 9. Build
-To build the frontend for production:
-1. Navigate to the frontend directory:
+This starts:
+
+- `backend` on `http://localhost:8000`; its container runs `alembic upgrade head` before Uvicorn.
+- `frontend` on `http://localhost:5173`.
+
+The Compose backend receives `DATABASE_URL=postgresql://postgres:postgres@postgres-db:5432/taskmanager` and `CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"]`. `postgres-db` is mapped to the Docker host by `extra_hosts`. The Compose frontend receives `VITE_API_BASE_URL=http://localhost:8000`, which is correct for browser requests.
+
+Stop the application containers with:
+
+```bash
+docker compose down
+```
+
+## Tests and build
+
+Backend tests use a separate real PostgreSQL database named `taskmanager_test`:
+
+```bash
+createdb -U postgres taskmanager_test
+cd backend
+. .venv/bin/activate
+pytest -q
+```
+
+The frontend commands are:
+
 ```bash
 cd frontend
-```
-2. Run the build command:
-```bash
+npm test
 npm run build
+npm run lint
 ```
-This generates the optimized static files in the `dist/` directory.
 
-## 10. Assumptions and Trade-offs
-- **Schema Decision**: We used `UUID` primary keys to keep identifiers globally unique and avoid sequential ID exposure.
-- **Rejected design**: We did not choose a nullable or application-managed board relationship for tasks; that would allow orphaned data and duplicate deletion logic across the backend.
-- **Chosen design**: `tasks.board_id` is mandatory, references `boards.id`, and uses PostgreSQL `ON DELETE CASCADE` to preserve referential integrity at the database level.
-- **Trade-off**: This removes some flexibility because tasks cannot exist independently of a board, but it keeps the data model consistent and makes deletes predictable for the application.
+`npm run preview` serves the built frontend locally when needed. The backend suite exercises service-layer success and failure paths plus API error shapes; the frontend suite covers board/task loading and interaction behavior.
+
+## Repository structure
+
+```text
+backend/app/       API, services, repositories, models, schemas, configuration
+backend/alembic/   migration environment and revisions
+backend/tests/     backend tests
+frontend/src/      React components, API clients, types, and tests
+compose.yaml       backend/frontend container orchestration
+context/           assessment requirements and walkthrough records
+```
+
+## API overview
+
+The backend exposes `GET /api/boards`, `POST /api/boards`, `DELETE /api/boards/{board_id}`, `GET/POST /api/boards/{board_id}/tasks`, `PATCH /api/tasks/{task_id}`, and `DELETE /api/tasks/{task_id}`. Task listing accepts an optional `status` query parameter. Swagger at `/docs` is the authoritative interactive contract; detailed request/response behavior is documented in [backend/README.md](backend/README.md).
+
+Successful reads return `200`, creates return `201`, and deletes return `204`. Validation failures return `422`, missing resources return `404`, and failures use `{error, message, field}`.
+
+## Assumptions, decisions, and scope
+
+- A task must belong to a board. Deleting a board cascades to its tasks through a database foreign key. Allowing orphan tasks and cleaning them up in application code was considered and rejected because it permits invalid rows.
+- The service assumes one local PostgreSQL instance and does not implement authentication or multi-user isolation.
+- Title/description editing, drag-and-drop status movement, drag-to-delete, status counts, and local persistence of the selected board/status filter are implemented UI extensions.
+- In scope: boards, task management and status operations, PostgreSQL persistence, REST API, frontend, validation, tests, and documentation.
+- Intentionally out of scope: authentication, production hardening, CI/CD, cloud deployment, production monitoring, real-time/WebSockets, pagination, a coverage percentage target, designer-grade or pixel-perfect styling, and unnecessary infrastructure.
+
+The project is an assessment implementation, not a claim of production hardening. Known operational limitations include the external PostgreSQL prerequisite for Compose and the absence of authentication, deployment, monitoring, and pagination.
+
+See [backend/README.md](backend/README.md) and [frontend/README.md](frontend/README.md) for service-specific details.

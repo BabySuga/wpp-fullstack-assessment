@@ -7,9 +7,11 @@ import './BoardList.css';
 interface BoardListProps {
   onSelectBoard: (board: Board | null) => void;
   selectedBoardId: string | null;
+  isOpen: boolean;
+  onClose: () => void;
 }
 
-export function BoardList({ onSelectBoard, selectedBoardId }: BoardListProps) {
+export function BoardList({ onSelectBoard, selectedBoardId, isOpen, onClose }: BoardListProps) {
   const [boards, setBoards] = useState<Board[]>([]);
   const [newBoardName, setNewBoardName] = useState('');
   const [boardNameError, setBoardNameError] = useState<string | null>(null);
@@ -35,9 +37,8 @@ export function BoardList({ onSelectBoard, selectedBoardId }: BoardListProps) {
 
   const validateBoardName = (value: string): string | null => {
     if (!value.trim()) {
-      return 'Board name is required.';
+      return 'Board name cannot be empty.';
     }
-
     return null;
   };
 
@@ -47,10 +48,7 @@ export function BoardList({ onSelectBoard, selectedBoardId }: BoardListProps) {
     const validationError = validateBoardName(trimmedName);
 
     setBoardNameError(validationError);
-
-    if (validationError) {
-      return;
-    }
+    if (validationError) return;
 
     try {
       const newBoard = await boardApi.create(trimmedName);
@@ -60,7 +58,6 @@ export function BoardList({ onSelectBoard, selectedBoardId }: BoardListProps) {
       onSelectBoard(newBoard);
     } catch (caughtError) {
       setBoardNameError(getUserFriendlyError(caughtError));
-      setError(null);
     }
   };
 
@@ -77,64 +74,103 @@ export function BoardList({ onSelectBoard, selectedBoardId }: BoardListProps) {
     }
   };
 
-  if (loading) return <div className="board-sidebar-loading">Loading boards...</div>;
-
   return (
-    <div className="board-sidebar">
-      <h2 className="sidebar-title">Boards</h2>
-      
-      <form onSubmit={handleCreateBoard} className="create-board-form">
-        <input
-          type="text"
-          value={newBoardName}
-          onChange={(e) => {
-            setNewBoardName(e.target.value);
-            if (boardNameError) {
-              setBoardNameError(null);
-            }
-          }}
-          placeholder="New Board Name"
-          className="create-board-input"
-          aria-invalid={Boolean(boardNameError)}
-        />
-        <button type="submit" className="create-board-btn" disabled={!newBoardName.trim()}>
-          Add
+    <nav
+      className={`sidebar${isOpen ? ' is-open' : ''}`}
+      aria-label="Boards navigation"
+    >
+      <div className="sidebar-header">
+        <span className="sidebar-title">Boards</span>
+        <button
+          className="sidebar-close"
+          onClick={onClose}
+          aria-label="Close navigation"
+        >
+          ✕
         </button>
+      </div>
+
+      <div className="create-board-section">
+        <form onSubmit={handleCreateBoard} className="create-board-form">
+          <input
+            id="new-board-name"
+            type="text"
+            value={newBoardName}
+            onChange={(e) => {
+              setNewBoardName(e.target.value);
+              if (boardNameError) setBoardNameError(null);
+            }}
+            placeholder="New board name…"
+            className="input create-board-input"
+            aria-label="New board name"
+            aria-invalid={Boolean(boardNameError)}
+            aria-describedby={boardNameError ? 'board-name-error' : undefined}
+          />
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={!newBoardName.trim()}
+          >
+            Add
+          </button>
+        </form>
         {boardNameError && (
-          <div role="alert" style={{ color: '#d93025', marginTop: '6px', fontSize: '0.85rem' }}>
+          <p
+            id="board-name-error"
+            role="alert"
+            className="field-error create-board-error"
+          >
             {boardNameError}
-          </div>
+          </p>
         )}
-      </form>
+      </div>
 
       {error && (
-        <div className="board-state-message board-error">
+        <div className="sidebar-error" role="alert">
           <p>{error}</p>
-          <button type="button" className="retry-btn" onClick={fetchBoards}>Try again</button>
+          <button type="button" className="btn btn-secondary" onClick={fetchBoards}>
+            Try again
+          </button>
         </div>
       )}
 
-      <ul className="board-list">
-        {boards.map(board => (
-          <li 
-            key={board.id} 
-            className={`board-item ${selectedBoardId === board.id ? 'selected' : ''}`}
-            onClick={() => onSelectBoard(board)}
-          >
-            <span className="board-name">{board.name}</span>
-            <button 
-              className="delete-board-btn" 
-              onClick={(e) => handleDeleteBoard(board.id, e)}
-              title="Delete Board"
-            >
-              &times;
-            </button>
-          </li>
-        ))}
-        {!error && boards.length === 0 && (
-          <div className="empty-boards">No boards found. Create one above!</div>
+      <div className="board-list-section">
+        {loading ? (
+          <div className="sidebar-loading">Loading…</div>
+        ) : (
+          <ul className="board-list" role="list">
+            {boards.map(board => (
+              <li key={board.id}>
+                <div
+                  className={`board-item${selectedBoardId === board.id ? ' is-selected' : ''}`}
+                  onClick={() => onSelectBoard(board)}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={selectedBoardId === board.id}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onSelectBoard(board);
+                    }
+                  }}
+                >
+                  <span className="board-name" title={board.name}>{board.name}</span>
+                  <button
+                    className="delete-board-btn"
+                    onClick={(e) => handleDeleteBoard(board.id, e)}
+                    aria-label={`Delete board: ${board.name}`}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </li>
+            ))}
+            {!loading && !error && boards.length === 0 && (
+              <li className="board-list-empty">No boards yet. Create one above.</li>
+            )}
+          </ul>
         )}
-      </ul>
-    </div>
+      </div>
+    </nav>
   );
 }

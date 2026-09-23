@@ -30,32 +30,34 @@ class TaskService:
         board = self.board_repository.get_by_id(db, board_id)
         if not board:
             raise NotFoundError("Board not found")
-            
-        if title is None or title.strip() == "":
+
+        trimmed_title = title.strip() if title is not None else title
+        if trimmed_title is None or trimmed_title == "":
             raise ValidationError("Title must not be empty", field="title")
-            
-        return self.task_repository.create(db, board_id, title=title, description=description)
+
+        return self.task_repository.create(db, board_id, title=trimmed_title, description=description)
 
     def update_task(self, db: Session, task_id: UUID, status: Optional[str] = None, title: Optional[str] = None, description: Optional[str] = None) -> Task:
         task = self.task_repository.get_by_id(db, task_id)
         if not task:
             raise NotFoundError("Task not found")
-            
+
         fields_to_update = {}
         if status is not None:
             status = status.strip().upper()
             if status not in VALID_STATUSES:
                 raise ValidationError("Status must be one of: TODO, IN_PROGRESS, DONE", field="status")
             fields_to_update["status"] = status
-            
+
         if title is not None:
-            if title.strip() == "":
+            trimmed_title = title.strip()
+            if trimmed_title == "":
                 raise ValidationError("Title must not be empty", field="title")
-            fields_to_update["title"] = title
-            
+            fields_to_update["title"] = trimmed_title
+
         if description is not None:
-            fields_to_update["description"] = description
-            
+            fields_to_update["description"] = description.strip() if description is not None else description
+
         return self.task_repository.update(db, task, **fields_to_update)
 
     def delete_task(self, db: Session, task_id: UUID) -> None:

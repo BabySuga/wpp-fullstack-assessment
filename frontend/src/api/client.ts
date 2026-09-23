@@ -53,6 +53,10 @@ export const getUserFriendlyError = (error: unknown): string => {
     return 'Something went wrong while loading this data. Please try again.';
   }
 
+  if (error instanceof Error && error.message && error.message.trim()) {
+    return error.message;
+  }
+
   return 'Something went wrong while loading this data. Please try again.';
 };
 
