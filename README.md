@@ -36,13 +36,38 @@ wpp-fullstack-assessment/
 ```
 
 ## 3. Database Setup
-The backend requires a PostgreSQL database to store boards and tasks.
+The backend requires PostgreSQL. The project expects a local PostgreSQL instance with the default credentials and database name defined in `backend/app/config.py` and `backend/.env.example`:
 
-1. Ensure PostgreSQL is installed and running, or use Docker:
-```bash
-docker run --name postgres-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=taskmanager -p 5432:5432 -d postgres
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/taskmanager
+CORS_ORIGINS=["http://localhost:5173"]
 ```
-*(The default configuration in `backend/app/config.py` expects a database named `taskmanager` accessible at `postgresql://postgres:postgres@localhost:5432/taskmanager`)*
+
+### Clean database setup
+1. Start PostgreSQL and create the database used by the app:
+```bash
+createdb -U postgres taskmanager
+# or
+psql -U postgres -d postgres -c "CREATE DATABASE taskmanager;"
+```
+2. In the `backend/` folder, copy the example environment file (or export the variable manually):
+```bash
+cp .env.example .env
+```
+3. The same `DATABASE_URL` is used by both the FastAPI app and Alembic. `backend/app/config.py` loads it into `settings.database_url`, and `backend/alembic/env.py` sets `sqlalchemy.url` from that same value before running migrations.
+4. Create the schema from the existing migration:
+```bash
+cd backend
+alembic upgrade head
+```
+This runs the initial migration in `backend/alembic/versions/7b722de3df3e_initial_schema.py`, which creates the `boards` and `tasks` tables, validation checks, and the `ix_tasks_board_id_status` index.
+5. After the schema is ready, start the backend:
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+The API will be running at `http://localhost:8000`.
+
+> Note: the repository’s `compose.yaml` sets `DATABASE_URL` for the backend container to `postgresql://postgres:postgres@postgres-db:5432/taskmanager`, but the project’s default working setup remains a PostgreSQL instance at `localhost:5432` for local development.
 
 ## 4. Backend Setup
 The backend API is built with FastAPI. To start the backend:
@@ -60,7 +85,7 @@ source venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
-4. Run database migrations to create the schema:
+4. Ensure the PostgreSQL database exists and then run the schema migration:
 ```bash
 alembic upgrade head
 ```
@@ -70,7 +95,67 @@ uvicorn app.main:app --reload --port 8000
 ```
 The API will be running at `http://localhost:8000`.
 
-## 5. Frontend Setup
+## 5. Database Schema
+
+The schema is created by the initial Alembic migration. It contains the following tables.
+
+### `boards`
+
+| Column | PostgreSQL type | Nullable | Default |
+| --- | --- | --- | --- |
+| `id` | `UUID` | No | `gen_random_uuid()` |
+| `name` | `VARCHAR(255)` | No | None |
+| `created_at` | `TIMESTAMPTZ` | No | `now()` |
+
+Primary key: `id`.
+
+### `tasks`
+
+| Column | PostgreSQL type | Nullable | Default |
+| --- | --- | --- | --- |
+| `id` | `UUID` | No | `gen_random_uuid()` |
+| `board_id` | `UUID` | No | None |
+| `title` | `VARCHAR(255)` | No | None |
+| `description` | `TEXT` | Yes | None |
+| `status` | `VARCHAR(20)` | No | `'TODO'` |
+| `created_at` | `TIMESTAMPTZ` | No | `now()` |
+| `updated_at` | `TIMESTAMPTZ` | No | `now()` |
+
+Primary key: `id`.
+
+### Relationships
+
+- `tasks.board_id` references `boards.id`.
+- The foreign key uses `ON DELETE CASCADE`, so deleting a board deletes its tasks.
+
+### Constraints
+
+- `boards_name_check`: `TRIM(boards.name) <> ''`.
+- `tasks_title_check`: `TRIM(tasks.title) <> ''`.
+- `tasks_status_check`: `tasks.status` must be one of `TODO`, `IN_PROGRESS`, or `DONE`.
+- The primary keys are non-null UUID values, and `tasks.board_id` is a required foreign key.
+- No other unique constraints are defined by the current schema.
+
+### Indexes
+
+- `ix_tasks_board_id_status` covers `tasks(board_id, status)`.
+- It supports retrieving a board's tasks, including queries that filter by status, without adding a separate index for each status value.
+
+### Design Rationale
+
+- UUID primary keys provide globally unique identifiers without exposing sequential record counts.
+- A required foreign key keeps every task associated with a board, while database-level cascading preserves referential integrity when a board is removed.
+- Non-empty checks prevent whitespace-only board names and task titles; the status check keeps task state within the three supported workflow values.
+- Time-zone-aware timestamps record creation and update times consistently, and the composite index matches the board task-list and status-filter query pattern.
+
+### Rejected schema decision
+
+- Alternative considered: allow tasks to remain without a board and handle deletion cleanup in application code instead of enforcing a foreign-key relationship.
+- Why it was rejected: this would allow orphaned task rows and move important referential integrity into the API layer, where it is easier to forget or bypass.
+- Chosen design: `tasks.board_id` is required and references `boards.id` with `ON DELETE CASCADE` in the migration, so deleting a board automatically removes its tasks.
+- Trade-off: the schema is slightly less flexible because a task cannot exist without a board, but it is safer and much simpler to reason about than managing board deletion manually.
+
+## 6. Frontend Setup
 The frontend is a React application created with Vite. To start the frontend:
 
 1. Navigate to the frontend directory:
@@ -87,7 +172,7 @@ npm run dev
 ```
 The frontend will be accessible at `http://localhost:5173`.
 
-## 6. API Documentation
+## 7. API Documentation
 
 ### Boards
 - **`GET /api/boards`**
@@ -127,13 +212,16 @@ The frontend will be accessible at `http://localhost:5173`.
 All API errors return a unified JSON payload:
 ```json
 {
-  "error": "NOT_FOUND | VALIDATION_ERROR | INTERNAL_ERROR",
+  "error": "NOT_FOUND | VALIDATION_ERROR | HTTP_ERROR | INTERNAL_ERROR",
   "message": "Human readable error message",
   "field": "Optional field name that caused the error"
 }
 ```
+This shape is used for application errors, request validation errors, HTTP errors,
+framework-generated 404 responses, and unexpected server errors. Internal exception
+details are not returned to clients.
 
-## 7. Testing
+## 8. Testing
 Backend tests are written using `pytest`. They use a real PostgreSQL database to ensure constraints and cascades work properly.
 
 To run the tests:
@@ -145,7 +233,7 @@ source venv/bin/activate
 pytest -v
 ```
 
-## 8. Build
+## 9. Build
 To build the frontend for production:
 1. Navigate to the frontend directory:
 ```bash
@@ -157,7 +245,8 @@ npm run build
 ```
 This generates the optimized static files in the `dist/` directory.
 
-## 9. Assumptions and Trade-offs
-- **Schema Decision**: We used `UUID` for primary keys to ensure globally unique identifiers and avoid ID enumeration attacks. 
-- **Database Constraints**: `ON DELETE CASCADE` is enforced at the database level for tasks linked to a board, ensuring data integrity without needing application-level cleanup logic. We use PostgreSQL `CheckConstraint` to prevent empty strings for titles and names.
-- **Trade-off**: The frontend does not use robust global state management (like Redux or Zustand) because the application is simple enough that React's built-in `useState` and prop drilling is sufficient and keeps the codebase lightweight.
+## 10. Assumptions and Trade-offs
+- **Schema Decision**: We used `UUID` primary keys to keep identifiers globally unique and avoid sequential ID exposure.
+- **Rejected design**: We did not choose a nullable or application-managed board relationship for tasks; that would allow orphaned data and duplicate deletion logic across the backend.
+- **Chosen design**: `tasks.board_id` is mandatory, references `boards.id`, and uses PostgreSQL `ON DELETE CASCADE` to preserve referential integrity at the database level.
+- **Trade-off**: This removes some flexibility because tasks cannot exist independently of a board, but it keeps the data model consistent and makes deletes predictable for the application.

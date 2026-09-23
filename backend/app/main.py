@@ -1,7 +1,8 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .exceptions import NotFoundError, ValidationError
 from .config import settings
@@ -43,6 +44,29 @@ async def request_validation_handler(request: Request, exc: RequestValidationErr
         "message": error.get("msg", "Invalid input"),
         "field": field
     })
+
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code == 404:
+        error = "NOT_FOUND"
+        message = "Resource not found"
+    elif exc.status_code in (400, 422):
+        error = "VALIDATION_ERROR"
+        message = "Request validation failed"
+    else:
+        error = "HTTP_ERROR"
+        message = "Request failed"
+
+    if isinstance(exc.detail, str) and exc.status_code != 500:
+        message = exc.detail
+
+    return JSONResponse(status_code=exc.status_code, content={
+        "error": error,
+        "message": message,
+        "field": None
+    })
+
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 
 @app.exception_handler(Exception)
 async def internal_error_handler(request: Request, exc: Exception):

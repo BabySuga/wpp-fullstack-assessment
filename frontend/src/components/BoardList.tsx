@@ -1,24 +1,29 @@
 import { useState, useEffect } from 'react';
 import type { Board } from '../types';
 import { boardApi } from '../api/boardApi';
+import { getUserFriendlyError } from '../api/client';
 import './BoardList.css';
 
 interface BoardListProps {
-  onSelectBoard: (board: Board) => void;
+  onSelectBoard: (board: Board | null) => void;
   selectedBoardId: string | null;
 }
 
 export function BoardList({ onSelectBoard, selectedBoardId }: BoardListProps) {
   const [boards, setBoards] = useState<Board[]>([]);
   const [newBoardName, setNewBoardName] = useState('');
+  const [boardNameError, setBoardNameError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchBoards = async () => {
     try {
+      setLoading(true);
+      setError(null);
       const data = await boardApi.getAll();
       setBoards(data);
-    } catch (error) {
-      console.error('Failed to fetch boards:', error);
+    } catch (caughtError) {
+      setError(getUserFriendlyError(caughtError));
     } finally {
       setLoading(false);
     }
@@ -28,16 +33,34 @@ export function BoardList({ onSelectBoard, selectedBoardId }: BoardListProps) {
     fetchBoards();
   }, []);
 
+  const validateBoardName = (value: string): string | null => {
+    if (!value.trim()) {
+      return 'Board name is required.';
+    }
+
+    return null;
+  };
+
   const handleCreateBoard = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newBoardName.trim()) return;
+    const trimmedName = newBoardName.trim();
+    const validationError = validateBoardName(trimmedName);
+
+    setBoardNameError(validationError);
+
+    if (validationError) {
+      return;
+    }
+
     try {
-      const newBoard = await boardApi.create(newBoardName);
+      const newBoard = await boardApi.create(trimmedName);
       setBoards([newBoard, ...boards]);
       setNewBoardName('');
+      setBoardNameError(null);
       onSelectBoard(newBoard);
-    } catch (error) {
-      console.error('Failed to create board:', error);
+    } catch (caughtError) {
+      setBoardNameError(getUserFriendlyError(caughtError));
+      setError(null);
     }
   };
 
@@ -47,10 +70,10 @@ export function BoardList({ onSelectBoard, selectedBoardId }: BoardListProps) {
       await boardApi.delete(boardId);
       setBoards(boards.filter(b => b.id !== boardId));
       if (selectedBoardId === boardId) {
-        onSelectBoard(null as any); // Type safety compromised for simplicity
+        onSelectBoard(null);
       }
-    } catch (error) {
-      console.error('Failed to delete board:', error);
+    } catch (caughtError) {
+      setError(getUserFriendlyError(caughtError));
     }
   };
 
@@ -64,14 +87,32 @@ export function BoardList({ onSelectBoard, selectedBoardId }: BoardListProps) {
         <input
           type="text"
           value={newBoardName}
-          onChange={(e) => setNewBoardName(e.target.value)}
+          onChange={(e) => {
+            setNewBoardName(e.target.value);
+            if (boardNameError) {
+              setBoardNameError(null);
+            }
+          }}
           placeholder="New Board Name"
           className="create-board-input"
+          aria-invalid={Boolean(boardNameError)}
         />
         <button type="submit" className="create-board-btn" disabled={!newBoardName.trim()}>
           Add
         </button>
+        {boardNameError && (
+          <div role="alert" style={{ color: '#d93025', marginTop: '6px', fontSize: '0.85rem' }}>
+            {boardNameError}
+          </div>
+        )}
       </form>
+
+      {error && (
+        <div className="board-state-message board-error">
+          <p>{error}</p>
+          <button type="button" className="retry-btn" onClick={fetchBoards}>Try again</button>
+        </div>
+      )}
 
       <ul className="board-list">
         {boards.map(board => (
@@ -90,7 +131,7 @@ export function BoardList({ onSelectBoard, selectedBoardId }: BoardListProps) {
             </button>
           </li>
         ))}
-        {boards.length === 0 && (
+        {!error && boards.length === 0 && (
           <div className="empty-boards">No boards found. Create one above!</div>
         )}
       </ul>

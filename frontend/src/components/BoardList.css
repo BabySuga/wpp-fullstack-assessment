@@ -120,3 +120,37 @@
   text-align: center;
   color: #64748b;
 }
+
+.board-state-message {
+  margin: 12px 16px 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background-color: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a4d00;
+}
+
+.board-state-message p {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.board-error {
+  background-color: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.retry-btn {
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  background-color: #3b82f6;
+  color: #fff;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.retry-btn:hover {
+  background-color: #2563eb;
+}

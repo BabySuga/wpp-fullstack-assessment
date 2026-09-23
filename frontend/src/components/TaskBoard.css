@@ -22,6 +22,15 @@
   color: #0f172a;
 }
 
+.status-filter-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
 .create-task-form {
   display: flex;
   gap: 12px;
@@ -139,6 +148,12 @@
   line-height: 1.4;
 }
 
+.task-created-at {
+  margin-top: 12px;
+  color: #64748b;
+  font-size: 0.78rem;
+}
+
 .delete-task-btn {
   background: none;
   border: none;
@@ -191,4 +206,46 @@
   flex: 1;
   color: #64748b;
   font-size: 1.1rem;
+}
+
+.board-state-panel,
+.board-empty-state,
+.filter-empty-state {
+  margin: 24px;
+  padding: 24px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  background-color: #fff;
+  text-align: center;
+  color: #475569;
+}
+
+.board-state-panel h3,
+.board-empty-state h3 {
+  margin-top: 0;
+  margin-bottom: 12px;
+  color: #0f172a;
+}
+
+.board-state-panel p,
+.board-empty-state p,
+.filter-empty-state p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.board-error-panel {
+  border-color: #fecaca;
+  background-color: #fef2f2;
+  color: #b91c1c;
+}
+
+.board-error-panel h3 {
+  color: #991b1b;
+}
+
+.filter-empty-state {
+  margin: 16px 24px 0;
+  background-color: #f8fafc;
+  border-style: dashed;
 }
